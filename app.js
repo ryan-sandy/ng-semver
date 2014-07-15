@@ -5,12 +5,14 @@
 'use strict';
 /*jslint node:true, indent:2, nomen:true*/
 
+var exec = require('child_process').exec;
 var argv = require('minimist')(process.argv.slice(2));
 var jsdom = require("jsdom");
 var fs = require('fs');
 var async = require('async');
 var semver = require('semver');
 var request = require('request');
+var path = require('path');
 
 
 var buildRevTree =  function (next) {
@@ -37,60 +39,147 @@ var buildRevTree =  function (next) {
   );
 };
 
-async.waterfall([
-  function (cb) {
-    if (argv.h || argv.help) {
-      console.log('Angular Fetch Utility');
-      console.log('Usage:');
-      console.log('  ngFetch [options] <version>');
-      console.log('Options:');
-      console.log('  --list: prints all available versions and exit');
-      process.exit(0);
-    }
-    cb();
-  },
-  function (cb) {
-    buildRevTree(function (err, vals) {
-      cb(err, vals);
-    });
-  },
-  function (revs, cb) {
-    if(argv.list) {
-      console.log(revs);
-      process.exit(0);
-    }
-    cb(null, revs);
-  },
-  function (revs, cb) {
-    var version;
-    if (argv._.length === 0) {
-      console.log('Warning: No version selected. Using latest.');
-      version = "*";
-    } else {
-      version = argv._[0];
-    }
-    version = semver.maxSatisfying(revs, version);
-    cb(null, version);
-  },
-  function (version, cb) {
-    var tmpName, path = 'http://code.angularjs.org/' + version + '/angular-' + version;
-    if (semver.lte(version, '1.0.8')) {
-      tmpName = 'tmp.tgz';
-      path += '.tgz';
-    } else {
-      tmpName = 'tmp.zip';
-      path += '.zip';
-    }
-    out = fs.createWriteStream(tmpName);
-    request(path, function (err, res) {
-      if (err) { return cb(err); }
-      cb(null, tmpName);
-    }).pipe(out);
-  }
-], function (err) {
-  if (err) { 
-    throw err;
-  }
-  console.log('done');
+var printHelp  = function () {
+  console.log('Angular Fetch Utility');
+  console.log('Usage:');
+  console.log('  semver-anuglar <Action>');
+  console.log('Actions:');
+  console.log('  list');
+  console.log('    prints all available versions and exits');
+  console.log('  install <path> <version>');
+  console.log('    <path>: path to install angular.');
+  console.log('    <version>: version of angular to install.');
+  console.log('  update <path> <version>');
+  console.log('    <path>: path to angular. If empty will install.');
+  console.log('    <version>: version of anulgar. Will attempt to update version to max satifies.');
+  console.log('               On update the path will be emptied.');
+  console.log('  help');
+  console.log('    print this message.');
+  console.log('  -h --help: Print this message');
+  console.log('NOTE: 1.0.0rc* releases are unsupported by the utility.');
   process.exit(0);
-});
+};
+
+var list = function () {
+  buildRevTree(function (err, revs) {
+    if (err) { throw err; }
+    console.log(revs.join('\n'));
+    process.exit(0);
+  });
+};
+
+var update = function (path, version) {
+  console.log('update is a stub');
+  process.exit(1);
+};
+
+var install = function (filePath, version) {
+  filePath = path.normalize(filePath);
+  async.waterfall([
+    function (cb) {
+      buildRevTree(function (err, revs) {
+        if (err) { return cb(err); }
+        cb(null, semver.maxSatisfying(revs, version));
+      });
+    },
+    function (ver, cb) {
+      var tmpPath;
+      if (semver.gt(ver, '1.0.3')) {
+        tmpPath = path.resolve(path.join(filePath, 'version.json'));
+        fs.exists(tmpPath, function (exists) {
+          if (exists) {
+            cb(null, ver, require(tmpPath).full);
+          } else {
+            cb(null, ver, false);
+          }
+        });
+      } else {
+        tmpPath = path.join(filePath, 'angular-' + ver + '.js');
+        tmpPath = path.resolve(tmpPath);
+        fs.exists(tmpPath, function (exists) {
+          if (exists) {
+            cb(null, ver, version);
+          } else {
+            cb(null, ver, false);
+          }
+        });
+      }
+    },
+    function (ver, checkedVersion, cb) {
+      if (checkedVersion && semver.satisfies(checkedVersion, ver)) {
+        console.log('up to date');
+        process.exit(0);
+      }
+      cb(null, ver);
+    },
+    function (ver, cb) {
+      fs.exists(filePath, function (exists) {
+        cb(null, ver, exists);
+      });
+    },
+    function (ver, exists, cb) {
+      if (exists) {
+        return cb(null, ver);
+      }
+      fs.mkdir(filePath, function (err) {
+        cb(err, ver);
+      });
+    },
+    function (ver, cb) {
+      if (semver.gt(ver, '1.0.2')) {
+        //zip
+        cb(null, ver, false);
+      } else {
+        //tarball
+        cb(null, ver, true);
+      }
+    },
+    function (ver, tarball, cb) {
+      var out, tmpName, url = 'http://code.angularjs.org/' + ver + '/angular-' + ver;
+      if (tarball) {
+        tmpName = 'tmp.tgz';
+        url += '.tgz';
+      } else {
+        tmpName = 'tmp.zip';
+        url += '.zip';
+      }
+      console.log(url);
+      out = fs.createWriteStream(tmpName);
+      request(url, function (err, res) {
+        if (err) { return cb(err); }
+        if (res.statusCode !== 200) {
+          return cb(new Error('Could not download archive. Status:' + res.statusCode));
+        }
+        cb(null, tarball);
+      }).pipe(out);
+    },
+    function (tarball, cb) {
+      console.log(tarball);
+      if (tarball) {
+        console.log('tarball unsupported');
+        return cb();
+      }
+      exec('unzip -j -o -d ' + path.join(filePath, 'tmp.zip') + '; rm tmp.zip', function (err) {
+        cb(err);
+      });
+    }
+  ], function (err) {
+    if (err) {
+      throw err;
+    }
+    process.exit(0);
+  });
+};
+
+if (argv.h || argv.help) {
+  printHelp();
+}
+if (argv._.length === 1 && argv._[0] === 'list') {
+  list();
+} else if (argv._.length === 3 && argv._[0] === 'install') {
+  install(argv._[1], argv._[2]);
+} else if (argv._length === 3 && argv._[0] === 'update') {
+  update();
+} else {
+  printHelp();
+}
