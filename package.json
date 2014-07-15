@@ -1,12 +1,14 @@
 {
-  "name": "angularFetch",
+  "name": "ng-semver",
   "version": "0.0.0",
+  "bin": "./ng-semver.js"
   "description": "",
   "main": "app.js",
   "dependencies": {
     "async": "^0.9.0",
     "jsdom": "^0.11.1",
     "minimist": "^0.2.0",
+    "npmlog": "^0.1.1",
     "request": "^2.37.0",
     "semver": "^2.3.1"
   },
